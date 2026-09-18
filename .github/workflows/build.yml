@@ -1,0 +1,19 @@
+name: Build Windows EXE
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: pip install pyinstaller
+      - run: pyinstaller --onefile --windowed --name "随机点名" random_question_embed.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 随机点名
+          path: dist/随机点名.exe
