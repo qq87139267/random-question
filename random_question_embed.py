@@ -20,13 +20,13 @@ MIN_W, MIN_H = 280, 160
 
 FONT_NAME = ("华文行草", "华文草书", "草体", "微软雅黑")
 FONT_SIZE_NAME = 51
-FONT_SIZE_TITLE = 16
-FONT_SIZE_BTN = 12
+FONT_SIZE_TITLE = 15
+FONT_SIZE_BTN = 11
 
 class RandomNameApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("下一位~")
+        self.root.title("下一位~O /|\ / \    👉")
         self.root.configure(bg=BG_COLOR)
         self.root.minsize(MIN_W, MIN_H)
         
