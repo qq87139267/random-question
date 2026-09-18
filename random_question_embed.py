@@ -18,7 +18,7 @@ ACCENT = "#4cc9f0"
 WIN_W, WIN_H = 320, 200
 MIN_W, MIN_H = 280, 160
 
-FONT_NAME = ("华文行草", "华文行书", "行体", "微软雅黑")
+FONT_NAME = ("华文行草", "华文草书", "草体", "微软雅黑")
 FONT_SIZE_NAME = 51
 FONT_SIZE_TITLE = 16
 FONT_SIZE_BTN = 12
