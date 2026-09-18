@@ -26,7 +26,7 @@ FONT_SIZE_BTN = 12
 class RandomNameApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("你来答")
+        self.root.title("下一位~")
         self.root.configure(bg=BG_COLOR)
         self.root.minsize(MIN_W, MIN_H)
         
