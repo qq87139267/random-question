@@ -1,95 +1,85 @@
 import os
-import re
 import random
 import tkinter as tk
-from tkinter import font
+from tkinter import ttk
 
-# ========== 基础配置 ==========
-ACCENT = "#1677ff"
-BTN_BG = "#1a3a5c"
-BTN_FG = "#ffffff"
-BG_COLOR = "#111111"
-
+# ================== 配置 ==================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BG_COLOR = "#1a1a2e"
+ACCENT = "#4facfe"
+BTN_BG = "#16213e"
+BTN_FG = "#eaeaea"
 
-# 字号（行草建议 58，比行书大一点更清晰）
-FONT_SIZE_NAME = 58
 _CANDIDATE_FONTS = ["华文行草", "华文行楷", "华文草书", "楷体", "微软雅黑"]
 
-FONT_TITLE = ("微软雅黑", 14, "bold")
-FONT_BTN = ("微软雅黑", 11)
-FONT_PROGRESS = ("微软雅黑", 10)
-
-# ⚠️ 不再顶层探测字体，留空，等 root 创建后再定
-FONT_NAME = "微软雅黑"  # 临时默认值，后面会覆盖
-
-
-def pick_available_font(root):
-    """必须在 tk.Tk() 之后调用"""
-    global FONT_NAME
+def _pick_font(size):
+    # 延迟检测，确保 root 已初始化
     try:
-        available = set(font.families(root))
+        available = tk.font.families()
         for f in _CANDIDATE_FONTS:
             if f in available:
-                FONT_NAME = f
-                return FONT_NAME
+                return (f, size)
+        return ("微软雅黑", size)
     except Exception:
-        pass
-    FONT_NAME = "微软雅黑"
-    return FONT_NAME
-
+        return ("微软雅黑", size)
 
 class RandomNameApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("💪 →下一位 ～～～👉")
-        self.root.geometry("320x200")
-        self.root.minsize(280, 160)
-        self.root.configure(bg=BG_COLOR)
+        root.title("💪 → 下一位 ~~~👉")
+        root.geometry("900x600")
+        root.configure(bg=BG_COLOR)
+        root.attributes("-topmost", True)
 
-        # ✅ 关键：先有 root，再探测字体
-        pick_available_font(root)
-
-        self.name_font = (FONT_NAME, FONT_SIZE_NAME, "bold")
-
-        # 班级数据（示例，保持你原有逻辑）
         self.classes = {}
-        self._load_classes()
-        self.class_keys = list(self.classes.keys())
+        self.current_class = "默认"
         self.current_idx = 0
-        self.current_class = self.class_keys[0] if self.class_keys else "默认"
-
-        self.pool = list(self.classes.get(self.current_class, []))
+        self.pool = []
         self.used = []
         self.running = False
         self.roll_timer = None
         self._roll_count = 0
 
-        # 标题
+        self._load_classes()
+        self.class_keys = list(self.classes.keys())
+        if self.class_keys:
+            self.current_class = self.class_keys[0]
+            self.pool = list(self.classes[self.current_class])
+
+        # 变量
         self.title_var = tk.StringVar(value=self.current_class)
-        tk.Label(root, textvariable=self.title_var, font=FONT_TITLE,
-                 fg="#fff", bg=BG_COLOR).pack(pady=(8, 0))
-
-        # 名字显示区
-        name_frame = tk.Frame(root, bg="#111", relief="ridge", bd=2)
-        name_frame.pack(expand=True, fill=tk.BOTH, padx=15, pady=10)
-
         self.name_var = tk.StringVar(value="准备")
-        self.name_label = tk.Label(
-            name_frame, textvariable=self.name_var,
-            font=self.name_font, fg="#ffffff", bg="#111"
-        )
-        self.name_label.pack(expand=True, fill=tk.BOTH, pady=10)
+
+        # 顶部标题（点击仍可换班）
+        title_frame = tk.Frame(root, bg=BG_COLOR)
+        title_frame.pack(pady=(15, 5))
+        self.title_label = tk.Label(title_frame, textvariable=self.title_var,
+                                    font=_pick_font(28), fg=ACCENT, bg=BG_COLOR,
+                                    cursor="hand2")
+        self.title_label.pack()
+        self.title_label.bind("<Button-1>", lambda e: self._switch_class())
+
+        # 显示区
+        display_frame = tk.Frame(root, bg=BG_COLOR, width=760, height=320,
+                                 highlightthickness=2, highlightbackground="#333")
+        display_frame.pack(pady=10)
+        display_frame.pack_propagate(False)
+
+        self.name_label = tk.Label(display_frame, textvariable=self.name_var,
+                                   font=_pick_font(58), fg="#ffffff", bg=BG_COLOR,
+                                   cursor="hand2")
+        self.name_label.place(relx=0.5, rely=0.5, anchor="center")
         self.name_label.bind("<Button-1>", lambda e: self._toggle())
 
         # 进度
-        self.progress = tk.Label(root, text="", font=FONT_PROGRESS,
-                                 fg="#888", bg=BG_COLOR)
-        self.progress.pack()
+        self.progress = tk.Label(root, text="", font=_pick_font(16),
+                                 fg="#aaa", bg=BG_COLOR)
+        self.progress.pack(pady=5)
+        self._update_progress()
 
-        # 按钮
+        # 按钮区（新增：换班按钮）
         btn_frame = tk.Frame(root, bg=BG_COLOR)
-        btn_frame.pack(pady=5)
+        btn_frame.pack(pady=10)
 
         self.start_btn = tk.Button(btn_frame, text="开始", font=("微软雅黑", 11, "bold"),
                                    width=5, height=2, command=self._toggle,
@@ -97,7 +87,12 @@ class RandomNameApp:
         self.start_btn.pack(side="left", padx=4)
 
         tk.Button(btn_frame, text="重置", font=("微软雅黑", 11), width=5, height=2,
-                  command=self._reset, bg=BTN_BG, fg=BTN_FG,
+                  command=self._reset", bg=BTN_BG, fg=BTN_FG,
+                  relief="flat", activebackground="#1a3a5c").pack(side="left", padx=4)
+
+        # 【新增换班按钮】
+        tk.Button(btn_frame, text="换班", font=("微软雅黑", 11), width=5, height=2,
+                  command=self._switch_class, bg=BTN_BG, fg=BTN_FG,
                   relief="flat", activebackground="#1a3a5c").pack(side="left", padx=4)
 
         # 快捷键
@@ -105,12 +100,12 @@ class RandomNameApp:
         root.bind("<Escape>", lambda e: self._switch_class())
         root.bind("<BackSpace>", lambda e: self._reset())
 
-        hint = tk.Label(root, text="空格:开始 | ESC:换班 | 退格:重置 | 点击名字:开始",
+        # 底部提示（已更新，更贴合无键盘大屏）
+        hint = tk.Label(root, text="点击名字:开始/停止 | 点击标题或[换班]:换班 | [重置]:重抽",
                         font=("微软雅黑", 8), fg="#555", bg=BG_COLOR)
         hint.pack(pady=(5, 0))
 
     def _load_classes(self):
-        # 保持你原有的 class428.txt 逻辑（简版示意）
         try:
             path = os.path.join(BASE_DIR, "class428.txt")
             if os.path.exists(path):
@@ -121,6 +116,12 @@ class RandomNameApp:
                 self.classes["默认"] = ["张三", "李四", "王五", "赵六"]
         except Exception:
             self.classes["默认"] = ["张三", "李四", "王五", "赵六"]
+
+    def _update_progress(self):
+        if self.class_keys:
+            total = len(self.classes[self.current_class])
+            remaining = len(self.pool)
+            self.progress.config(text=f"剩余 {remaining}/{total}")
 
     def _toggle(self):
         if self.running:
@@ -154,7 +155,7 @@ class RandomNameApp:
         if self.roll_timer:
             self.root.after_cancel(self.roll_timer)
             self.roll_timer = None
-        self.progress.config(text="")
+        self._update_progress()
 
     def _auto_stop(self):
         self.running = False
@@ -173,9 +174,7 @@ class RandomNameApp:
         else:
             self.name_label.config(fg="#ffd700")
 
-        total = len(self.classes[self.current_class])
-        remaining = len(self.pool)
-        self.progress.config(text=f"剩余 {remaining}/{total}")
+        self._update_progress()
 
     def _switch_class(self):
         if not self.class_keys:
@@ -187,16 +186,16 @@ class RandomNameApp:
         self.used = []
         self.name_var.set("准备")
         self.name_label.config(fg="#ffffff")
-        self.progress.config(text="")
         self._stop()
+        self._update_progress()
 
     def _reset(self):
         self.pool = list(self.classes[self.current_class])
         self.used = []
         self.name_var.set("准备")
         self.name_label.config(fg="#ffffff")
-        self.progress.config(text="")
         self._stop()
+        self._update_progress()
 
 
 if __name__ == "__main__":
