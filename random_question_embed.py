@@ -1,231 +1,237 @@
 # -*- coding: utf-8 -*-
-"""
-随机点名（触屏友好完整版）
-------------------------------------------------
-功能：
-  - 窗口自动贴屏幕【右上角】+ 持续强制置顶（PPT / 大屏不遮挡）
-  - 自动扫描 exe 同目录下的 class1.txt / class2.txt ...（每行一个名字，#开头为备注）
-  - 一个班点完自动不重复；全部点完自动重置
-  - 空格 / 回车 = 开始·停止；ESC = 换班；退格 = 重置本轮
-  - 【触屏 / 无键盘】点按钮即可：换班 / 开始 / 重置；直接戳中间大名字也能开始·停止
-
-名单文件示例（UTF-8 编码，与 exe 放同一文件夹）：
-    class1.txt
-    ---------
-    # 一班
-    张三
-    李四
-    ...
-
-打包：pyinstaller --onefile --windowed --name "随机点名" random_question_embed.py
-"""
 import os
 import sys
 import glob
 import random
-import time
-import threading
-
 import tkinter as tk
 from tkinter import font as tkfont
 
-# ============ 外观配置 ============
+# ========== 路径处理（关键修复：强制基于 exe 所在目录） ==========
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# ========== 配置 ==========
+WIN_W = 340
+WIN_H = 200
 BG_COLOR = "#1a1a2e"
-FG_COLOR = "#e94560"
-BTN_FONT = ("微软雅黑", 13)
-NAME_FONT = ("微软雅黑", 34, "bold")
-HINT_FONT = ("微软雅黑", 10)
-TITLE_FONT = ("微软雅黑", 12)
-WINDOW_W, WINDOW_H = 340, 230
-MARGIN = 10  # 距屏幕边缘边距
+FG_COLOR = "#e0e0e0"
+ACCENT = "#4fc3f7"
+BTN_BG = "#16213e"
+BTN_FG = "#b0bec5"
+
+# ========== 班级名单加载 ==========
+def load_classes():
+    """扫描 BASE_DIR 下所有 class*.txt，支持多数字（class1/class428等）"""
+    classes = {}
+    pattern = os.path.join(BASE_DIR, "class*.txt")
+    files = sorted(glob.glob(pattern))
+    
+    if not files:
+        # 没有找到任何 class*.txt，用内置测试名单
+        classes["默认"] = ["张三", "李四", "王五", "赵六", "钱七"]
+        return classes
+    
+    for fpath in files:
+        fname = os.path.basename(fpath)
+        # 从文件名提取班级标识：class428.txt → "428班"
+        stem = os.path.splitext(fname)[0]  # class428
+        class_id = stem.replace("class", "") or "1"
+        class_name = f"{class_id}班" if class_id.isdigit() else stem
+        
+        names = []
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        names.append(line)
+        except (UnicodeDecodeError, OSError):
+            # UTF-8 失败则尝试 GBK（兼容旧文件）
+            try:
+                with open(fpath, "r", encoding="gbk") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#"):
+                            names.append(line)
+            except Exception:
+                continue
+        
+        if names:
+            classes[class_name] = names
+    
+    if not classes:
+        classes["默认"] = ["张三", "李四", "王五"]
+    
+    return classes
 
 
-def resource_path(rel):
-    """兼容 PyInstaller 打包后的资源路径（读取同目录 class*.txt）"""
-    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base, rel)
-
-
-class App:
-    def __init__(self, root):
-        self.root = root
+# ========== 主程序 ==========
+class RandomNameApp:
+    def __init__(self):
+        self.root = tk.Tk()
         self.root.title("随机点名")
         self.root.configure(bg=BG_COLOR)
-        self.root.geometry(f"{WINDOW_W}x{WINDOW_H}")
-
-        # ---- 触屏按钮要够大 ----
-        try:
-            tkfont.Font(name="TkDefaultFont", exists=True)
-        except Exception:
-            pass
-
-        # 状态数据
-        self.all_names = []
-        self.remaining = []
-        self.running = False
-        self._rolling = False
-        self.class_files = []
-        self.class_index = 0
-        self.current_class = ""
-
-        self.class_var = tk.StringVar(value="无班级")
-        self.display_var = tk.StringVar(value="准备")
-        self.hint_var = tk.StringVar(value="点「开始」或戳名字开始")
-
-        self._build_ui()
-        self._load_class_list()
-        self._load_current_class()
-
-        # 启动后定位 + 持续置顶
-        self.root.after(50, self._place_top_right)
-        self.root.after(200, self._force_top)
-
-        # 键盘快捷键（有键盘时也可用）
-        self.root.bind("<space>", lambda e: self._toggle())
-        self.root.bind("<Return>", lambda e: self._toggle())
-        self.root.bind("<BackSpace>", lambda e: self._reset_round())
-        self.root.bind("<Escape>", lambda e: self._choose_class())
-
-    # ---------------- UI ----------------
-    def _build_ui(self):
-        tk.Label(self.root, textvariable=self.class_var, font=TITLE_FONT,
-                 bg=BG_COLOR, fg="#aaaaaa").pack(pady=(8, 0))
-
-        # 名字显示区（可点击 = 开始/停止）
-        self.display_label = tk.Label(self.root, textvariable=self.display_var,
-                                     font=NAME_FONT, bg=BG_COLOR, fg=FG_COLOR,
-                                     cursor="hand2", height=2)
-        self.display_label.pack(pady=6)
-        self.display_label.bind("<Button-1>", lambda e: self._toggle())
-
-        # 进度条
-        self.progress = tk.Canvas(self.root, width=260, height=4, bg="#333333",
-                                  highlightthickness=0)
-        self.progress.pack(pady=4)
-        self.progress_bar = self.progress.create_rectangle(0, 0, 0, 4, fill=FG_COLOR)
-
-        tk.Label(self.root, textvariable=self.hint_var, font=HINT_FONT,
-                 bg=BG_COLOR, fg="#888888").pack(pady=(2, 6))
-
-        # 触屏按钮区（无键盘也能操作）
-        btn_f = tk.Frame(self.root, bg=BG_COLOR)
-        btn_f.pack(pady=4)
-        tk.Button(btn_f, text="换班", font=BTN_FONT, width=6, height=2,
-                  command=self._choose_class, bg="#333333", fg="#dddddd",
-                  relief="flat", activebackground="#444444").pack(side="left", padx=4)
-        self.start_btn = tk.Button(btn_f, text="开始", font=BTN_FONT, width=6, height=2,
-                                   command=self._toggle, bg=FG_COLOR, fg="#1a1a2e",
-                                   relief="flat", activebackground="#ff6b81")
-        self.start_btn.pack(side="left", padx=4)
-        tk.Button(btn_f, text="重置", font=BTN_FONT, width=6, height=2,
-                  command=self._reset_round, bg="#333333", fg="#dddddd",
-                  relief="flat", activebackground="#444444").pack(side="left", padx=4)
-
-    # ---------------- 窗口位置 / 置顶 ----------------
-    def _place_top_right(self):
+        self.root.resizable(False, False)
+        
+        # 右上角定位
         self.root.update_idletasks()
-        sw = self.root.winfo_screenwidth()
-        x = sw - WINDOW_W - MARGIN
-        y = MARGIN
-        self.root.geometry(f"{WINDOW_W}x{WINDOW_H}+{x}+{y}")
-
+        screen_w = self.root.winfo_screenwidth()
+        x = screen_w - WIN_W - 10
+        y = 10
+        self.root.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+        
+        # 持续置顶
+        self.root.attributes("-topmost", True)
+        self.root.after(500, self._force_top)
+        
+        # 加载班级
+        self.classes = load_classes()
+        self.class_keys = list(self.classes.keys())
+        self.current_idx = 0
+        self.current_class = self.class_keys[0]
+        self.pool = list(self.classes[self.current_class])
+        self.used = []
+        self.running = False
+        self.roll_timer = None
+        
+        self._build_ui()
+        
+        # 键盘绑定
+        self.root.bind("<space>", lambda e: self._toggle())
+        self.root.bind("<Escape>", lambda e: self._switch_class())
+        self.root.bind("<BackSpace>", lambda e: self._reset())
+        
+        self.root.mainloop()
+    
     def _force_top(self):
-        try:
-            self.root.attributes("-topmost", True)
-            self.root.lift()
-            self.root.after(500, self._force_top)
-        except Exception:
-            pass
-
-    # ---------------- 班级 / 名单 ----------------
-    def _load_class_list(self):
-        files = sorted(glob.glob(resource_path("class*.txt")))
-        self.class_files = files
-
-    def _load_current_class(self):
-        if not self.class_files:
-            self.all_names = ["张三", "李四", "王五"]
-            self.remaining = list(self.all_names)
-            self.current_class = ""
-            self.class_var.set("默认名单")
-            return
-        self.current_class = self.class_files[self.class_index]
-        with open(self.current_class, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        names = [l.strip() for l in lines if l.strip() and not l.startswith("#")]
-        self.all_names = names
-        self.remaining = list(self.all_names)
-        base = os.path.splitext(os.path.basename(self.current_class))[0]
-        self.class_var.set(base)
-
-    def _choose_class(self):
-        if not self.class_files:
-            self.display_var.set("无名单")
-            self.hint_var.set("请把 class*.txt 与 exe 放一起")
-            return
-        self.class_index = (self.class_index + 1) % len(self.class_files)
-        self._load_current_class()
-        self.display_var.set("准备")
-        self.hint_var.set(f"已换班：{self.class_var.get()}  （戳名字开始）")
-        self.progress.coords(self.progress_bar, 0, 0, 0, 4)
-
-    # ---------------- 点名逻辑 ----------------
+        """每500ms强制置顶"""
+        self.root.attributes("-topmost", True)
+        self.root.lift()
+        self.root.after(500, self._force_top)
+    
+    def _build_ui(self):
+        """构建界面"""
+        # 标题
+        self.title_var = tk.StringVar(value=self.current_class)
+        title_label = tk.Label(self.root, textvariable=self.title_var,
+                               font=("微软雅黑", 12), fg=ACCENT, bg=BG_COLOR)
+        title_label.pack(pady=(10, 5))
+        
+        # 名字显示（可点击）
+        self.name_var = tk.StringVar(value="准备")
+        self.name_label = tk.Label(self.root, textvariable=self.name_var,
+                                   font=("微软雅黑", 28, "bold"),
+                                   fg=FG_COLOR, bg=BG_COLOR, cursor="hand2")
+        self.name_label.pack(pady=10)
+        self.name_label.bind("<Button-1>", lambda e: self._toggle())
+        
+        # 进度条
+        self.progress = tk.Label(self.root, text="", font=("微软雅黑", 9),
+                                 fg="#666", bg=BG_COLOR)
+        self.progress.pack()
+        
+        # 按钮区
+        btn_frame = tk.Frame(self.root, bg=BG_COLOR)
+        btn_frame.pack(pady=(10, 5))
+        
+        tk.Button(btn_frame, text="换班", font=("微软雅黑", 11), width=5, height=2,
+                  command=self._switch_class, bg=BTN_BG, fg=BTN_FG,
+                  relief="flat", activebackground="#1a3a5c").pack(side="left", padx=4)
+        
+        self.start_btn = tk.Button(btn_frame, text="开始", font=("微软雅黑", 11, "bold"),
+                                   width=5, height=2, command=self._toggle,
+                                   bg=ACCENT, fg="#1a1a2e", relief="flat")
+        self.start_btn.pack(side="left", padx=4)
+        
+        tk.Button(btn_frame, text="重置", font=("微软雅黑", 11), width=5, height=2,
+                  command=self._reset, bg=BTN_BG, fg=BTN_FG,
+                  relief="flat", activebackground="#1a3a5c").pack(side="left", padx=4)
+        
+        # 底部提示
+        hint = tk.Label(self.root, text="空格:开始 | ESC:换班 | 退格:重置 | 点击名字:开始",
+                        font=("微软雅黑", 8), fg="#555", bg=BG_COLOR)
+        hint.pack(pady=(5, 0))
+    
     def _toggle(self):
         if self.running:
             self._stop()
         else:
             self._start()
-
+    
     def _start(self):
-        if not self.remaining:
-            self.remaining = list(self.all_names)
+        if not self.pool:
+            self.pool = list(self.classes[self.current_class])
+            self.used = []
+        
         self.running = True
-        self._rolling = True
-        self.display_var.set("滚动中…")
-        self.hint_var.set("2 秒后自动停")
-        self.start_btn.config(text="停止", bg="#ff4444", fg="#ffffff")
-        threading.Thread(target=self._roll, daemon=True).start()
-        self.root.after(2000, self._stop)
-        self._anim_progress(0)
-
-    def _roll(self):
-        pool = self.remaining if self.remaining else self.all_names
-        while self._rolling and pool:
-            n = random.choice(pool)
-            self.root.after(0, lambda name=n: self.display_var.set(name))
-            time.sleep(0.05)
-
-    def _anim_progress(self, elapsed):
-        if not self.running:
-            return
-        ratio = min(elapsed / 2000, 1.0)
-        self.progress.coords(self.progress_bar, 0, 0, int(260 * ratio), 4)
-        if ratio < 1.0:
-            self.root.after(30, lambda: self._anim_progress(elapsed + 30))
-
+        self.start_btn.config(text="停止", bg="#ef5350", fg="white")
+        self._roll()
+    
     def _stop(self):
         self.running = False
-        self._rolling = False
-        self.start_btn.config(text="开始", bg=FG_COLOR, fg="#1a1a2e")
-        pool = self.remaining if self.remaining else self.all_names
-        result = random.choice(pool) if pool else "—"
-        if self.remaining and result in self.remaining:
-            self.remaining.remove(result)
-        self.display_var.set(result)
-        self.hint_var.set(f"剩余 {len(self.remaining)} 人 | 点「重置」重开")
-        self.progress.coords(self.progress_bar, 0, 0, 0, 4)
-
-    def _reset_round(self):
-        self.remaining = list(self.all_names)
-        self.display_var.set("已重置")
-        self.hint_var.set("戳名字或点「开始」开始")
-
-
-def main():
-    root = tk.Tk()
-    App(root)
-    root.mainloop()
+        self.start_btn.config(text="开始", bg=ACCENT, fg="#1a1a2e")
+        if self.roll_timer:
+            self.root.after_cancel(self.roll_timer)
+            self.roll_timer = None
+        self.progress.config(text="")
+    
+    def _roll(self):
+        if not self.running:
+            return
+        
+        if self.pool:
+            name = random.choice(self.pool)
+            self.name_var.set(name)
+        
+        self.roll_timer = self.root.after(80, self._roll)
+        
+        # 2秒后自动停止
+        if not hasattr(self, '_roll_count'):
+            self._roll_count = 0
+        self._roll_count += 1
+        if self._roll_count >= 25:  # 25 × 80ms ≈ 2秒
+            self._roll_count = 0
+            self._auto_stop()
+    
+    def _auto_stop(self):
+        if not self.running:
+            return
+        self.running = False
+        self.start_btn.config(text="开始", bg=ACCENT, fg="#1a1a2e")
+        if self.roll_timer:
+            self.root.after_cancel(self.roll_timer)
+            self.roll_timer = None
+        
+        # 从池里移除已抽中的人
+        chosen = self.name_var.get()
+        if chosen in self.pool:
+            self.pool.remove(chosen)
+            self.used.append(chosen)
+        
+        # 进度显示
+        total = len(self.classes[self.current_class])
+        remaining = len(self.pool)
+        self.progress.config(text=f"剩余 {remaining}/{total}")
+    
+    def _switch_class(self):
+        self.current_idx = (self.current_idx + 1) % len(self.class_keys)
+        self.current_class = self.class_keys[self.current_idx]
+        self.title_var.set(self.current_class)
+        self.pool = list(self.classes[self.current_class])
+        self.used = []
+        self.name_var.set("准备")
+        self.progress.config(text="")
+        self._stop()
+    
+    def _reset(self):
+        self.pool = list(self.classes[self.current_class])
+        self.used = []
+        self.name_var.set("准备")
+        self.progress.config(text="")
+        self._stop()
 
 
 if __name__ == "__main__":
-    main()
+    RandomNameApp()
