@@ -1,7 +1,6 @@
 import os
 import random
 import tkinter as tk
-from tkinter import ttk
 
 # ================== 配置 ==================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -13,7 +12,6 @@ BTN_FG = "#eaeaea"
 _CANDIDATE_FONTS = ["华文行草", "华文行楷", "华文草书", "楷体", "微软雅黑"]
 
 def _pick_font(size):
-    # 延迟检测，确保 root 已初始化
     try:
         available = tk.font.families()
         for f in _CANDIDATE_FONTS:
@@ -26,7 +24,7 @@ def _pick_font(size):
 class RandomNameApp:
     def __init__(self, root):
         self.root = root
-        root.title("💪 → 下一位 ~~~👉")
+        root.title("💪 → 下一位~~就你啦 ~~~👉")
         root.geometry("900x600")
         root.configure(bg=BG_COLOR)
         root.attributes("-topmost", True)
@@ -46,11 +44,10 @@ class RandomNameApp:
             self.current_class = self.class_keys[0]
             self.pool = list(self.classes[self.current_class])
 
-        # 变量
         self.title_var = tk.StringVar(value=self.current_class)
         self.name_var = tk.StringVar(value="准备")
 
-        # 顶部标题（点击仍可换班）
+        # 顶部标题（点击换班）
         title_frame = tk.Frame(root, bg=BG_COLOR)
         title_frame.pack(pady=(15, 5))
         self.title_label = tk.Label(title_frame, textvariable=self.title_var,
@@ -77,7 +74,7 @@ class RandomNameApp:
         self.progress.pack(pady=5)
         self._update_progress()
 
-        # 按钮区（新增：换班按钮）
+        # 按钮区
         btn_frame = tk.Frame(root, bg=BG_COLOR)
         btn_frame.pack(pady=10)
 
@@ -86,11 +83,11 @@ class RandomNameApp:
                                    bg=ACCENT, fg="#1a1a2e", relief="flat")
         self.start_btn.pack(side="left", padx=4)
 
+        # ✅ 这行引号已修好
         tk.Button(btn_frame, text="重置", font=("微软雅黑", 11), width=5, height=2,
-                  command=self._reset", bg=BTN_BG, fg=BTN_FG,
+                  command=self._reset, bg=BTN_BG, fg=BTN_FG,
                   relief="flat", activebackground="#1a3a5c").pack(side="left", padx=4)
 
-        # 【新增换班按钮】
         tk.Button(btn_frame, text="换班", font=("微软雅黑", 11), width=5, height=2,
                   command=self._switch_class, bg=BTN_BG, fg=BTN_FG,
                   relief="flat", activebackground="#1a3a5c").pack(side="left", padx=4)
@@ -100,7 +97,6 @@ class RandomNameApp:
         root.bind("<Escape>", lambda e: self._switch_class())
         root.bind("<BackSpace>", lambda e: self._reset())
 
-        # 底部提示（已更新，更贴合无键盘大屏）
         hint = tk.Label(root, text="点击名字:开始/停止 | 点击标题或[换班]:换班 | [重置]:重抽",
                         font=("微软雅黑", 8), fg="#555", bg=BG_COLOR)
         hint.pack(pady=(5, 0))
