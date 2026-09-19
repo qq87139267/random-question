@@ -11,16 +11,18 @@ ACCENT = "#4facfe"
 BTN_BG = "#16213e"
 BTN_FG = "#eaeaea"
 
-# 内置候选字体（系统已安装时优先匹配）
+IDLE_SECONDS = 20
+IDLE_ALPHA = 0.5
+ACTIVE_ALPHA = 1.0
+
 _CANDIDATE_FONTS = ["华文行草", "华文行楷", "华文草书", "楷体", "微软雅黑"]
 
-# ================== 字体注册（固化行草，不依赖目标电脑字体库） ==================
+
+# ================== 字体注册 ==================
 def _register_embedded_font():
-    """把打包进 exe 的 STXINGKA.TTF 注册到 tk，返回注册成功的字体名"""
     font_path = os.path.join(BASE_DIR, "STXINGKA.TTF")
     if os.path.exists(font_path):
         try:
-            # 用临时 Tk 注册字体文件
             tmp = tk.Tk()
             tmp.withdraw()
             tkfont.Font(root=tmp, name="stxingka", file=font_path)
@@ -30,11 +32,11 @@ def _register_embedded_font():
             pass
     return None
 
+
 _REGISTERED_FONT = _register_embedded_font()
 
 
 def _pick_font(size):
-    """优先使用固化的华文行草，否则走系统候选列表兜底"""
     if _REGISTERED_FONT:
         return (_REGISTERED_FONT, size)
     try:
@@ -47,13 +49,15 @@ def _pick_font(size):
         return ("微软雅黑", size)
 
 
+# ================== 主程序 ==================
 class RandomNameApp:
     def __init__(self, root):
         self.root = root
         root.title("💪 → 下一位~~就你啦 ~~~👉")
-        root.geometry("900x600")
+        root.geometry("300x200")
         root.configure(bg=BG_COLOR)
         root.attributes("-topmost", True)
+        root.attributes("-alpha", ACTIVE_ALPHA)
 
         self.classes = {}
         self.current_class = "默认"
@@ -73,7 +77,7 @@ class RandomNameApp:
         self.title_var = tk.StringVar(value=self.current_class)
         self.name_var = tk.StringVar(value="准备")
 
-        # 顶部标题（点击换班）
+        # 顶部标题
         title_frame = tk.Frame(root, bg=BG_COLOR)
         title_frame.pack(pady=(15, 5))
         self.title_label = tk.Label(
@@ -128,23 +132,48 @@ class RandomNameApp:
             relief="flat", activebackground="#1a3a5c"
         ).pack(side="left", padx=4)
 
-        # 快捷键
+        # 快捷键（保留功能，但不触发透明度恢复）
         root.bind("<space>", lambda e: self._toggle())
         root.bind("<Escape>", lambda e: self._switch_class())
         root.bind("<BackSpace>", lambda e: self._reset())
 
-        # 底部提示（已整合命名规则）
+        # 底部提示
         hint = tk.Label(
             root,
             text=(
                 "操作：点击名字/空格=开始停止 | 点击标题/换班/Esc=换班 | 重置/Backspace=重抽\n"
-                "名单：class数字.txt → “X班”；class名称.txt → “名称”；不带class前缀不识别"
+                "名单：class数字.txt → “X班”；class名称.txt → “名称”；不带class前缀不识别\n"
+                "特性：静置20秒窗口半透明，点击窗口立即恢复"
             ),
             font=("微软雅黑", 8), fg="#666666", bg=BG_COLOR, justify="left"
         )
         hint.pack(pady=(5, 10))
 
-    # ================== 名单加载（自动扫描 class*.txt） ==================
+        # ================== 闲置检测 ==================
+        self._idle_timer = None
+        self._reset_idle_timer()
+        self._bind_activity()
+
+    # ================== 闲置逻辑 ==================
+    def _reset_idle_timer(self):
+        if self._idle_timer:
+            self.root.after_cancel(self._idle_timer)
+        self.root.attributes("-alpha", ACTIVE_ALPHA)
+        self._idle_timer = self.root.after(
+            IDLE_SECONDS * 1000, self._enter_idle
+        )
+
+    def _enter_idle(self):
+        self.root.attributes("-alpha", IDLE_ALPHA)
+
+    def _bind_activity(self):
+        # ✅ 仅绑定鼠标点击，不绑定移动和键盘
+        self.root.bind("<ButtonPress>", self._on_activity)
+
+    def _on_activity(self, event=None):
+        self._reset_idle_timer()
+
+    # ================== 名单加载 ==================
     def _load_classes(self):
         pattern = os.path.join(BASE_DIR, "class*.txt")
         files = sorted(glob.glob(pattern))
@@ -154,7 +183,7 @@ class RandomNameApp:
         for fpath in files:
             fname = os.path.basename(fpath)
             stem = os.path.splitext(fname)[0]
-            suffix = stem[len("class"):]  # 去掉 "class" 前缀
+            suffix = stem[len("class"):]
             class_name = f"{suffix}班" if suffix.isdigit() else suffix
             names = []
             for encoding in ("utf-8", "gbk"):
@@ -225,14 +254,10 @@ class RandomNameApp:
             self.pool.remove(chosen)
             self.used.append(chosen)
 
-        if not self.pool:
-            self.name_label.config(fg="#ff4d4f")
-        else:
-            self.name_label.config(fg="#ffd700")
-
+        self.name_label.config(fg="#ffd700" if self.pool else "#ff4d4f")
         self._update_progress()
 
-    # ================== 换班（核心：真多班切换） ==================
+    # ================== 换班 ==================
     def _switch_class(self):
         if not self.class_keys:
             return
