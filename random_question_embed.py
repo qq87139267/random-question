@@ -2,6 +2,7 @@ import os
 import glob
 import random
 import tkinter as tk
+import tkinter.font as tkfont
 
 # ================== 配置 ==================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -10,17 +11,41 @@ ACCENT = "#4facfe"
 BTN_BG = "#16213e"
 BTN_FG = "#eaeaea"
 
+# 内置候选字体（系统已安装时优先匹配）
 _CANDIDATE_FONTS = ["华文行草", "华文行楷", "华文草书", "楷体", "微软雅黑"]
 
+# ================== 字体注册（固化行草，不依赖目标电脑字体库） ==================
+def _register_embedded_font():
+    """把打包进 exe 的 STXINGKA.TTF 注册到 tk，返回注册成功的字体名"""
+    font_path = os.path.join(BASE_DIR, "STXINGKA.TTF")
+    if os.path.exists(font_path):
+        try:
+            # 用临时 Tk 注册字体文件
+            tmp = tk.Tk()
+            tmp.withdraw()
+            tkfont.Font(root=tmp, name="stxingka", file=font_path)
+            tmp.destroy()
+            return "华文行草"
+        except Exception:
+            pass
+    return None
+
+_REGISTERED_FONT = _register_embedded_font()
+
+
 def _pick_font(size):
+    """优先使用固化的华文行草，否则走系统候选列表兜底"""
+    if _REGISTERED_FONT:
+        return (_REGISTERED_FONT, size)
     try:
-        available = tk.font.families()
+        available = tkfont.families()
         for f in _CANDIDATE_FONTS:
             if f in available:
                 return (f, size)
         return ("微软雅黑", size)
     except Exception:
         return ("微软雅黑", size)
+
 
 class RandomNameApp:
     def __init__(self, root):
@@ -108,13 +133,18 @@ class RandomNameApp:
         root.bind("<Escape>", lambda e: self._switch_class())
         root.bind("<BackSpace>", lambda e: self._reset())
 
+        # 底部提示（已整合命名规则）
         hint = tk.Label(
             root,
-            text="点击名字:开始/停止 | 点击标题或[换班]:换班 | [重置]:重抽",
-            font=("微软雅黑", 8), fg="#555", bg=BG_COLOR
+            text=(
+                "操作：点击名字/空格=开始停止 | 点击标题/换班/Esc=换班 | 重置/Backspace=重抽\n"
+                "名单：class数字.txt → “X班”；class名称.txt → “名称”；不带class前缀不识别"
+            ),
+            font=("微软雅黑", 8), fg="#666666", bg=BG_COLOR, justify="left"
         )
-        hint.pack(pady=(5, 0))
+        hint.pack(pady=(5, 10))
 
+    # ================== 名单加载（自动扫描 class*.txt） ==================
     def _load_classes(self):
         pattern = os.path.join(BASE_DIR, "class*.txt")
         files = sorted(glob.glob(pattern))
@@ -124,8 +154,8 @@ class RandomNameApp:
         for fpath in files:
             fname = os.path.basename(fpath)
             stem = os.path.splitext(fname)[0]
-            class_id = stem.replace("class", "") or "1"
-            class_name = f"{class_id}班" if class_id.isdigit() else stem
+            suffix = stem[len("class"):]  # 去掉 "class" 前缀
+            class_name = f"{suffix}班" if suffix.isdigit() else suffix
             names = []
             for encoding in ("utf-8", "gbk"):
                 try:
@@ -148,6 +178,7 @@ class RandomNameApp:
             remaining = len(self.pool)
             self.progress.config(text=f"剩余 {remaining}/{total}")
 
+    # ================== 抽奖控制 ==================
     def _toggle(self):
         if self.running:
             self._stop()
@@ -201,6 +232,7 @@ class RandomNameApp:
 
         self._update_progress()
 
+    # ================== 换班（核心：真多班切换） ==================
     def _switch_class(self):
         if not self.class_keys:
             return
@@ -221,6 +253,7 @@ class RandomNameApp:
         self.name_label.config(fg="#ffffff")
         self._stop()
         self._update_progress()
+
 
 if __name__ == "__main__":
     root = tk.Tk()
